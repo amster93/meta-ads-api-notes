@@ -1,323 +1,240 @@
 # Meta Ads API notes
 
-Field notes from setting up a **server-to-server ads uploader**: one Meta app, system users, App Review, Full Access, and the rate-limit mess.
+Field notes from wiring a **server-to-server ads uploader**: one Meta app, system users, Business Verification, App Review, Marketing API Access Tier, and rate limits.
 
-This is the guide we send people who ask “how did you wire the system user?” and the usual group-thread questions: approved app or workaround, one app vs many, system user per BM, why accounts get disabled. Official docs exist. They are badly maintained, names keep changing, and they do not match the headers you actually get. Use the official links at the bottom. Trust live headers and exact error codes more than the prose.
+Meta’s own pages use several names for the same flags and do not always match the headers on a live response. This guide separates **what the current docs say** from **what we observed**. Official links are at the bottom. Prefer live `ads_api_access_tier` headers and exact `code` / `error_subcode` pairs over dashboard copy.
 
 ---
 
 ## TL;DR
 
-1. Create a **Business** app owned by a **spend-free toolmaker Business Manager**.
-2. Add the **Marketing API** product. You start on **Limited** access (headers still say `development_access`).
-3. Create an **Admin system user** in each ad BM. Assign the app with **full control**, then the ad accounts and Pages. Mint a token **after** that.
-4. Do **not** fight the Limited / “dev” tier in production. The **60 max score** is the thing that ruins you.
-5. Build it as a **server-to-server app**, then **do App Review** and upgrade **Marketing API Access Tier** to **Full Access**. For S2S apps this is a form, not a screen recording. Ours took about **two hours**.
-6. Full Access is the rate-limit upgrade. Headers still call it `standard_access`. Yes, that is stupid.
-
-If you only remember one thing: **do the review. The Full Access quotas are worth it.**
+1. You need a **Business** app. A system user does not replace it.
+2. Connect that app to a Business Manager and complete **Business Verification**. Meta’s system-user overview asks for App Review **and** Business Verification for the permissions the system user will use.
+3. Add the **Marketing API** product. You start on **Limited Access** (headers: `development_access`).
+4. For production volume, upgrade **Marketing API Access Tier** to **Full Access** (headers: `standard_access`) through App Review. Meta documents Limited as development-only.
+5. In each ad BM: Admin system user → assign the app with **full control** → assign that BM’s ad accounts and Pages → **then** mint the token.
+6. If you only admin your own accounts, **standard access** on `ads_management` / `ads_read` is enough for those permissions. That is **not** the same as Full Access on the Marketing API Access Tier.
 
 ---
 
-## The naming mess (read this first)
+## The naming mess
 
-Meta reused the same English words for three independent controls. One does not grant the others.
+Three independent controls share similar English. One does not grant the others.
 
-| What people say | What it actually is | Where you set it |
+| Phrase | What it is | Where |
 |---|---|---|
-| **Full control** | Asset assignment on the system user (the app, ad accounts, Pages) | Business Settings → System users |
-| **Full Access** | Marketing API **capacity tier** (rate limits, system-user caps) | App Dashboard → App Review → **Marketing API Access Tier** |
-| **Advanced Access** | Per-permission / per-feature review state | App Dashboard → App Review → that permission |
+| **Full control** | Asset assignment on the system user (app, ad accounts, Pages) | Business Settings → System users |
+| **Full Access** | Marketing API **Access Tier** (rate limits, BM API surface, system-user caps on the app-owning BM) | App Dashboard → App Review → **Marketing API Access Tier** |
+| **Advanced Access** | Per-permission / per-feature Graph access level | App Dashboard → App Review → that permission or feature |
 
-Then they **renamed the tier** and did not update every page:
+Meta renamed the **tier** and did not update every page:
 
-| UI now | Older UI / some pages | Header / API value |
+| UI now | Older UI / some pages still say | Header / API value |
 |---|---|---|
-| **Limited Access** (default) | Development access / “Standard Access” to the old *Ads Management Standard Access* feature | `development_access` |
-| **Full Access** (after review) | “Advanced Access” to that same feature | `standard_access` |
+| **Limited Access** (default) | Development access; “Standard Access” to *Ads Management Standard Access* | `development_access` |
+| **Full Access** (after App Review) | “Advanced Access” to that same feature | `standard_access` |
 
-Live proof of your tier is the header field `ads_api_access_tier`, not the dashboard copy.
+Sources: [Authorization](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization), [Rate limiting](https://developers.facebook.com/documentation/ads-commerce/marketing-api/overview/rate-limiting), [Access levels](https://developers.facebook.com/docs/graph-api/overview/access-levels).
 
-Official rename notice: [Marketing API Rate Limiting](https://developers.facebook.com/documentation/ads-commerce/marketing-api/overview/rate-limiting) and [Authorization](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization).
-
----
-
-## What we run (and why)
-
-We upload and manage ads from our own servers against Business Managers we admin. No public login, no third-party advertisers clicking “Allow”.
-
-That means:
-
-- **System users, never personal profile tokens.** Profile tokens die (`data_access_expires_at` ~90 days), they attach spend to a human, and they are the pattern associated with bans.
-- **One app**, owned by a dedicated **toolmaker BM** that spends nothing. Share that app into each ad BM. Do **not** create a new app per BM — app *creation* is what trips verification storms, not sharing an existing app.
-- **One Admin system user + one token per ad BM.** Assign only that BM’s ad accounts and Pages. A hub token that can reach every BM is one leak / one restriction away from total loss.
-- **Pin a Graph version** (`v25.0` as of this writing). Never call unversioned / “latest”.
-
-The Graph API **cannot** create Business Managers or Facebook Pages. That part stays manual.
+Live proof of the tier is `ads_api_access_tier` on `X-Business-Use-Case-Usage`, `X-Ad-Account-Usage`, or `X-FB-Ads-Insights-Throttle`.
 
 ---
 
-## FAQ — the questions people actually ask
+## What Meta requires
 
-These are the same questions that show up in uploader / “built with AI” threads. Short answers; setup steps are below.
+### 1. An app
 
-### Do I still need an app if I use a system user?
+System users call Graph **through an app**. Create a **Business** type app at [developers.facebook.com/apps](https://developers.facebook.com/apps), add the **Marketing API** product, and record `APP_ID` / `APP_SECRET` in a private environment.
 
-Yes. A system user is not a replacement for the app. The app is the API client. The system user is the identity that app uses to call Graph. No app → no token → no API.
+### 2. A Business Manager that owns (or has claimed) the app
 
-### Unverified app with lower limits, or do App Review?
+[System user overview](https://developers.facebook.com/docs/business-management-apis/system-users/overview): the BM needs a real person as admin, and must own/claim a Facebook app. A system user can only be granted a **role on the app** if the system user and the app belong to the same business. For another business’s token, Meta points at [On Behalf Of](https://developers.facebook.com/docs/marketing-api/business-manager/guides/on-behalf-of/).
 
-You start Limited (unreviewed). That is fine for minting a token and a few test calls. It is **not** fine for an uploader.
+Sharing/claiming the app into an ad BM so it appears under that BM’s Apps list is the usual way to install it on that BM’s system user. Confirm it is visible there before minting.
 
-The advice “system user runs fine on standard access, App Review is only for advanced perms” is the **naming mess** above. People mix three buttons:
+### 3. Business Verification
 
-- **Permission** standard vs advanced — if you only admin your own ad accounts, you do **not** need Advanced Access on `ads_management`. True.
-- **Marketing API Access Tier** Limited vs Full — this is the rate-limit upgrade. You **do** want this. Headers still call Full Access `standard_access`, which is why that advice sounds right and is wrong.
-- **Full control** on the system user — asset assignment. Unrelated.
+This is a **separate** process from App Review. It is easy to miss because the dashboards treat it as a prompt inside App Review.
 
-We ran Limited. The **60 max score** is what wrecks you. Do the S2S App Review and take Full Access. There is no good workaround.
+Meta currently says:
 
-### One app shared to every BM, separate system user per BM?
+- **Advanced Access requires Business Verification** (since 1 Feb 2023). [Access levels](https://developers.facebook.com/docs/graph-api/overview/access-levels), [announcement](https://developers.facebook.com/blog/post/2023/02/01/developer-platform-requiring-business-verification-for-advanced-access/).
+- Apps that request Advanced Access, and apps that let **other Businesses** use the app to access their data, must be connected to a **verified** Business. Until then, users from other Businesses cannot grant permissions and features stay inactive. [Business Verification](https://developers.facebook.com/documentation/development/release/business-verification).
+- System-user overview: the app should go through **App Review and Business Verification** for the permissions the system user needs. [Overview](https://developers.facebook.com/docs/business-management-apis/system-users/overview).
+- The App Review form may block submit until verification is done. [Submission guide](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review/submission-guide) (“Complete Business Verification”).
 
-Yes. That is the setup.
+**Role-only exception:** if the app is only used by people who have a [role on the app](https://developers.facebook.com/documentation/development/build-and-test/app-roles), Meta says those users can grant permissions without verification. That exception is about **app-role humans**, not a free pass for system users or for sharing the app into other BMs.
+
+How to do it:
+
+1. App Dashboard → **Settings → Basic → Verification** → connect the app to the Business that should own it (the company that owns the app, not a spend BM, if you split those).
+2. An **Admin of that Business** completes verification in Business Manager. App admins cannot finish it unless they are also BM admins.
+3. Documents and identity checks are listed in [About Business Verification](https://www.facebook.com/business/help/1095661473946872). Typical asks: legal name, address, phone, website, and business documents (registry extract, tax letter, utility bill — whatever the form requests for your country).
+4. If you build the app for a client who will own it, verify **their** business, not yours. [S2S apps](https://developers.facebook.com/documentation/development/create-an-app/server-to-server-apps).
+
+This is not the two-hour App Review queue. Verification can ask for more documents and can take longer. After it completes, Advanced Access also adds data-handling questions.
+
+### 4. App Review for Full Access (production rate limits)
+
+Adding Marketing API grants **Limited Access** automatically.
+
+Meta: Limited is “for development only. Not for production apps running for live advertisers.” [Authorization](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization).
+
+To upgrade **Marketing API Access Tier → Full Access**:
+
+- ≥ **500 successful Marketing API calls** in the last 15 days
+- Error rate **&lt; 15%** on the last 500 calls
+
+Then App Dashboard → App Review → Permissions and Features → **Marketing API Access Tier** → **Upgrade**.
+
+Make at least one successful call per permission you will request, within 30 days of submit. [Submission guide](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review/submission-guide). Graph API Explorer counts.
+
+If you manage **other people’s** ad accounts (they click Allow), you also need **Advanced Access** on `ads_management` / `ads_read`. If you only manage accounts you already admin, **standard access** on those permissions is documented as sufficient — you still want the **tier** upgrade for quota.
+
+### 5. A system user and a token, per Business Manager you operate
+
+Created in Business Settings (fastest) or via API. Assign the app, ad accounts, and Pages, then generate the token. Details below.
+
+---
+
+## Setup: the app (once)
+
+Useful S2S basic settings ([server-to-server apps](https://developers.facebook.com/documentation/development/create-an-app/server-to-server-apps)):
+
+| Setting | What Meta asks |
+|---|---|
+| **App icon** | 1024×1024, no Meta trademarks. Your logo, or the client’s if they will own the app. |
+| **Business use** | **Yourself or your own business** if you only access your own data; **Client** if other businesses will use the app. |
+| **Platform** | **Website** + company URL (no UI). |
+| **Privacy policy URL** | Required before review. |
+| **Live mode** | Meta recommends switching to Live only after App Review. |
+
+What we do: one app, owned by a **spend-free** BM, then share/claim that app into each ad BM. Recreating the app for token repair or a new BM is usually unnecessary. App *creation* is also the step that tends to trigger extra verification.
+
+Meta’s SU cap is on the BM that **owns the app**, and follows the access tier ([overview limits](https://developers.facebook.com/docs/business-management-apis/system-users/overview)):
+
+| Access (old names on that page) | System users | Admin system users |
+|---|---|---|
+| Standard (= Limited tier) | 1 | 1 |
+| Advanced (= Full Access tier) | 10 | 1 |
+
+Admin system user stays at 1 on purpose: use it to mint/manage other system users, not as the daily ads token.
+
+---
+
+## Setup: system user (repeat per ad BM)
+
+Official: [System Users](https://developers.facebook.com/docs/business-management-apis/system-users), [create](https://developers.facebook.com/docs/business-management-apis/system-users/create-retrieve-update), [install app + tokens](https://developers.facebook.com/docs/business-management-apis/system-users/install-apps-and-generate-tokens), [assign assets](https://developers.facebook.com/docs/business-management-apis/system-users/guides/permissions), [Help Center](https://www.facebook.com/business/help/503306463479099?id=2190812977867143).
+
+1. **Share or claim the app** into this ad BM (toolmaker BM → app settings → add BM). It should appear under the ad BM → Business Settings → Apps.
+2. **Create an Admin system user** in that BM (or a regular system user if an admin SU already exists). Each BM gets its own.
+3. **Assign the app** to that system user with **full control**. Without this, scopes at mint time are not actually available.
+4. **Assign only this BM’s ad accounts and Pages.** Account tasks we use: `MANAGE`, `ADVERTISE`, `ANALYZE`. Pages are a separate assignment. A Page that merely sits in the same BM is not enough. Missing Page assignment often shows up as `code 10` / `subcode 1341012`.
+5. **Generate the token after 3–4.** Tokens do not pick up grants added later; scope or asset repair means mint again.
+
+   API: `POST /{system-user-id}/access_tokens` with `business_app`, `scope`, `appsecret_proof`. Meta now prefers **60-day expiring** tokens (`set_token_expires_in_60_days=true`); some businesses cannot mint non-expiring ones. Expiring tokens need a refresh job ([token docs](https://developers.facebook.com/docs/business-management-apis/system-users/install-apps-and-generate-tokens)).
+
+   Store one env var per BM. Do not put tokens in git, tickets, or Airtable.
+
+6. **Check before the next BM:**
 
 ```text
-toolmaker BM  ──owns──  one app
-                 │
-                 ├── share app → ad BM A → Admin system user A → token A
-                 │                         (only A’s ad accounts + Pages)
-                 └── share app → ad BM B → Admin system user B → token B
-                                           (only B’s ad accounts + Pages)
-```
-
-One system-user token on a BM covers the **ad accounts you assigned to that system user** in that BM. It does not magically see every account in the BM, and it must not be reused on another BM.
-
-### Multiple profiles?
-
-Do not. Personal profile tokens are the “bad API setup” that gets BMs and ad accounts disabled. They expire, they attach API actions to a human, and they are the pattern associated with bans. System users only.
-
-### “Create a few apps and have Claude rotate them like load balancing”
-
-Do not. We run **one** app.
-
-That tip is people trying to multiply the Limited-tier **60 score** by minting extra apps. App *creation* is what trips Meta’s security / verification storm. Extra apps also split **app-wide** limiters (code `4`, Insights platform). That looks like quota evasion. `613` with no subcode is abuse prevention. This is a plausible way to earn the “disabled because of bad API setup” story.
-
-If you are hitting limits:
-
-1. Read the actual error `code` / `subcode` and headers. Classify which limiter it is.
-2. If you are still Limited: stop rotating anything. Get Full Access.
-3. If you already have Full Access and you are bursting mutations: you are hitting **100 QPS**, not “need more apps”. Slow down.
-4. Only an **app-wide** limiter with header proof would even make a second app a conversation. We have not needed it.
-
-An LLM cannot load-balance Meta quotas. Pace on headers, stop on throttle, one token per BM.
-
-### Best way to connect, managing many BMs / ad accounts?
-
-1. One Business app, toolmaker BM, Marketing API product.
-2. S2S App Review → **Marketing API Access Tier = Full Access**.
-3. Share that app into each ad BM. One Admin system user + one token per BM. Assign that BM’s accounts and Pages.
-4. Call Graph with `Authorization: Bearer`, `appsecret_proof`, a pinned version.
-5. Never profile tokens, never one hub token across BMs, never a farm of apps.
-
----
-
-## Part A — the app (once)
-
-### 1. Toolmaker Business Manager
-
-Create or pick a BM that will **own the app and never spend**. If an ad BM gets restricted, the app and the sharing survive.
-
-Help: [Business Manager](https://developers.facebook.com/docs/business-management-apis/business-manager-api).
-
-### 2. Create the app
-
-[developers.facebook.com/apps](https://developers.facebook.com/apps) → create app → type **Business**.
-
-Set the owning Business to the toolmaker BM (or add the app under that BM in Business Settings → Apps).
-
-Basic settings that matter for a server-to-server uploader ([S2S apps](https://developers.facebook.com/documentation/development/create-an-app/server-to-server-apps)):
-
-| Setting | What we do |
-|---|---|
-| **App icon** | Company logo, 1024×1024, no Meta trademarks |
-| **Business use** | **Yourself or your own business** if you only touch accounts you admin |
-| **Platform** | **Website** + company URL (there is no UI) |
-| **Privacy policy URL** | Required before review. Real URL. |
-| **Live mode** | Stay in development until review is done |
-
-Add the **Marketing API** product. That puts you on **Limited Access** automatically.
-
-Record `APP_ID` and `APP_SECRET`. Those stay in a private env, never in git, never in Airtable, never in chat.
-
-### 3. Do not publish. Do not invent a second app.
-
-Leave it unpublished while you wire tokens. Repairing a token or adding a BM is **not** an excuse to recreate the app. Adding BMs is **share the existing app**, not “new app per BM” and not “rotate apps for limits” — see the FAQ.
-
----
-
-## Part B — system user (repeat per ad BM)
-
-Official: [System Users](https://developers.facebook.com/docs/business-management-apis/system-users), [create](https://developers.facebook.com/docs/business-management-apis/system-users/create-retrieve-update), [install app + mint token](https://developers.facebook.com/docs/business-management-apis/system-users/install-apps-and-generate-tokens), [assign assets](https://developers.facebook.com/docs/business-management-apis/system-users/guides/permissions). Clicks: [Add a system user](https://www.facebook.com/business/help/503306463479099?id=2190812977867143).
-
-### 1. Share the app into this ad BM
-
-From the **toolmaker** BM’s app settings, add the ad BM. It then shows up under the ad BM → Business Settings → Apps.
-
-Do this. Do **not** create another app.
-
-### 2. Create an Admin system user in the ad BM
-
-Business Settings → Users → System users → Add. Role **Admin**.
-
-Each BM gets its own. Never reuse one system user across BMs.
-
-### 3. Assign the app to that system user with **full control**
-
-This is the step people skip. If the app is not assigned with full control, the scopes you tick at mint time are not actually available.
-
-### 4. Assign **only this BM’s** ad accounts and Pages
-
-Same UI as assigning assets to a human. Tasks we use on ad accounts: `MANAGE`, `ADVERTISE`, `ANALYZE`. Pages need to be assigned **separately** — a Page sitting in the same BM is not enough. Missing Page assignment is `code 10 / subcode 1341012` (“no permission to access this profile”).
-
-No cross-BM assets.
-
-### 5. Generate a long-lived system-user token
-
-Mint **after** steps 3–4. A token does **not** pick up permissions you add later. Scope repair = mint a new token.
-
-UI is fine. API is `POST /{system-user-id}/access_tokens` with `business_app`, `scope`, `appsecret_proof`. Meta now pushes **60-day expiring** tokens (`set_token_expires_in_60_days=true`) and some businesses cannot mint non-expiring ones. If you mint expiring, you need a rotation job.
-
-Store one env var per BM, e.g. `META_SU_TOKEN_<BUSINESS_ID>`. Never a single global `META_ACCESS_TOKEN`.
-
-### 6. Prove it before you onboard the next BM
-
-```bash
 GET /debug_token?input_token=TOKEN
-# authenticate this call with app_id|app_secret, not the user token
+# authenticate with app_id|app_secret
 
 GET /{business_id}?fields=id,name
-# must return the BM you think you just wired
 ```
 
-Check: token valid, bound to **this** `APP_ID`, required scopes present, BM id matches. `/debug_token` is the inspector: [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/).
+Expect: valid, bound to this `APP_ID`, required scopes present, BM id matches. [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/).
+
+What we run: one token per ad BM, only that BM’s assets. A single hub token that can reach every BM concentrates leak and restriction risk. That is our operating choice, not a Meta mandate.
 
 ---
 
-## Scopes we actually mint
+## Scopes we mint
 
-For an ads uploader that creates campaigns / ad sets / ads, reads performance, and talks to Pages:
+Uploader that creates campaigns / ad sets / ads, reads reports, and talks to Pages:
 
 | Scope | Why |
 |---|---|
 | `ads_management` | Create / edit campaigns, ad sets, ads |
 | `ads_read` | Read config and reports |
-| `business_management` | BM assets, system users, audits |
-| `pages_read_engagement` | Page-side read for ads on Pages |
-| `pages_manage_ads` | Page-linked ads (keep if you run Page ads) |
+| `business_management` | BM assets, system users |
+| `pages_read_engagement` | Page-side read for Page ads |
+| `pages_manage_ads` | Page-linked ads |
 | `pages_show_list` | List Pages the token can see |
 
-Optional, only if you use them: `pages_manage_posts`, `pages_manage_engagement`, `read_insights`.
+Optional if you use them: `pages_manage_posts`, `pages_manage_engagement`, `read_insights`.
 
-Grant the ones you need **at mint time**. Extra scopes on the token are fine; missing ones are not.
+Grant what you need **at mint time**. Allowed system-user scopes: [install apps and generate tokens](https://developers.facebook.com/docs/business-management-apis/system-users/install-apps-and-generate-tokens). Permission catalog: [Permissions](https://developers.facebook.com/docs/permissions).
 
-If you **only** manage ad accounts you already admin, **standard access** to `ads_management` / `ads_read` is enough for those accounts. You still want the **Marketing API Access Tier → Full Access** feature for rate limits. Those are different buttons.
-
-Permission reference: [Permissions](https://developers.facebook.com/docs/permissions). System-user allowed scopes: [Install apps and generate tokens](https://developers.facebook.com/docs/business-management-apis/system-users/install-apps-and-generate-tokens).
+Own accounts: standard access on `ads_management` / `ads_read` is enough per [Authorization](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization). Other people’s accounts: Advanced Access on those permissions, plus they must grant via OAuth. Either way, the **Marketing API Access Tier** is the quota button.
 
 ---
 
 ## Limited vs Full Access
 
-### What Limited (dev) actually is
+From [Authorization](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization) and [Rate limiting](https://developers.facebook.com/documentation/ads-commerce/marketing-api/overview/rate-limiting):
 
-Default when you add Marketing API.
+| | Limited (default) | Full Access (after App Review) |
+|---|---|---|
+| How | Add Marketing API product | Upgrade **Marketing API Access Tier** |
+| Rate limits | Heavy, per ad account. Documented as development-only. | Higher quotas, still per ad account |
+| Score cap | **60**, decay 300s, block **300s** | **9000**, decay 300s, block **60s** |
+| BUC `ads_management` / hour | `300 + 40 × active_ads` | `100000 + 40 × active_ads` |
+| BUC `ads_insights` / hour | `600 + 400 × active_ads` (− error term) | `190000 + 400 × active_ads` (− error term) |
+| System users on **app-owning** BM | 1 + 1 admin | 10 + 1 admin |
+| Business Manager / Catalog APIs | Limited | Full surface |
+| Pages via API | Cannot create Pages | Cannot create Pages |
 
-- Heavily rate-limited **per ad account**.
-- **Ad-account score cap: 60.** Decay 300s. Hit it → blocked **300 seconds**.
-- BUC `ads_management` hourly: `300 + 40 × active_ads`.
-- **1 Admin system user + 1 system user** on the app. That is a hard cap.
-- Fine for wiring tokens and a handful of calls. Not fine for an uploader.
+Reads are generally 1 score point, writes 3. Score errors: `17/2446079`, `613/1487742`.
 
-The killer is the **60 max score**, not the 300+40×N BUC formula people quote. A read is 1 point, a write is 3. In theory ~60 reads or ~20 writes in the window — except **not every endpoint counts toward that score**, and the docs do not tell you which. You find out by watching headers and error `17/2446079` or `613/1487742`.
+**What we observed on Limited:** the **60 score** is the first wall for an uploader. Not every endpoint clearly counted toward that score, and the docs do not list which. We treated Full Access as the production path rather than trying to stay on Limited.
 
-We tried to live here. Do not.
-
-### What Full Access actually is
-
-After App Review on the **Marketing API Access Tier** feature:
-
-- Score cap **9000**, block **60s** (still 300s decay).
-- BUC `ads_management` hourly: `100000 + 40 × active_ads`.
-- Insights, custom audience, catalog quotas jump the same way.
-- **10 system users + 1 admin system user**.
-- Full Business Manager / Catalog API surface.
-
-It does **not** change whether your create payload is valid. It only changes capacity.
-
-Compare: [Authorization — Limited vs Full](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization).
-
-### How to get Full Access
-
-Requirements Meta currently publishes ([same page](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization#get-full-access)):
-
-1. **≥ 500 successful Marketing API calls in the last 15 days**
-2. **Error rate &lt; 15% on the last 500 calls**
-
-Then: App Dashboard → App Review → Permissions and Features → **Marketing API Access Tier** → **Upgrade**.
-
-Do **at least one successful call per permission** you will request, within 30 days of submit ([submission guide](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review/submission-guide)). Graph API Explorer counts.
-
-Warmup tactic: cheap **reads** (1 point) against your own accounts until 500 is on the board. Do not burn writes on Limited. Round-robin a few endpoints (`/me/adaccounts`, a campaign GET, a Page GET) so every requested scope shows usage.
-
-### App Review as a server-to-server app
-
-This is the path people miss. The generic App Review tutorial screams **screen recordings**. That is for apps with a UI.
-
-If your app has **no interface** and talks Graph from a server, use:
-
-- [Server-to-Server Apps](https://developers.facebook.com/documentation/development/create-an-app/server-to-server-apps)
-- [App Review](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review)
-
-What we did:
-
-- App type / platform: **Website**.
-- Business use: **Yourself or your own business**.
-- Testing instructions: there is nothing to click. Describe that a system user token calls Marketing API to create and read ads on accounts we admin. Reuse that text in the usage boxes.
-- **No screen recording.** S2S docs say: describe how the data is used; if you already described it, paste it again.
-- Fill the form with an LLM. Paste the S2S page + the permission “Allowed Usage” blurb + one paragraph of what your uploader actually does. Tell it to write a specific usage description **per permission**, not the same paragraph six times. Meta’s own guide says do not copy-paste.
-- Submit **Marketing API Access Tier** plus the scopes you mint.
-
-Ours came back in about **two hours**. Consumer-app reviews can take days and want videos. S2S is a different queue.
-
-Business Verification is a **separate** process ([Business Verification](https://developers.facebook.com/docs/apps/business-verification)). You may be prompted. It is not the same button as Full Access.
-
-After approval, **prove it live**: one Ads Management response must show `ads_api_access_tier: "standard_access"`. Then treat Full Access as real. Dashboard copy without a header is not proof.
+Warmup for the 500-call gate: cheap **reads** against accounts you already admin (`/me/adaccounts`, a campaign GET, a Page GET) until the dashboard counts are there. Keep the error rate down; retries on bad calls work against you.
 
 ---
 
-## Rate limits — several systems, none of them honest
+## App Review as a server-to-server app
 
-Marketing API is **excluded** from Graph Platform rate limits. You still have **multiple independent** Marketing limits. Hitting one does not mean the others are fine. Merging them into one “utilization %” is how you false-stop the wrong account.
+Generic App Review ([tutorial](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review/submission-guide)) assumes a UI and **screen recordings**.
 
-| System | Typical signal | Scope | Limited | Full |
-|---|---|---|---|---|
-| Ad-account **score** | `17/2446079`, `613/1487742`, header `X-Ad-Account-Usage` | app + ad account | max 60, block 300s | max 9000, block 60s |
-| **BUC** ads_management | `80004`, header `X-Business-Use-Case-Usage` | app + ad account + BUC | `300 + 40×active_ads` / hour | `100000 + 40×active_ads` / hour |
-| BUC ads_insights | `80000` | same | `600 + 400×active_ads` | `190000 + 400×active_ads` |
-| Insights **platform** | `4/1504022`, `4/1504039` | **whole app** Insights | undocumented capacity | undocumented capacity |
-| Mutation **QPS** | `613/5044001` | app + ad account | 100 QPS on create/edit | 100 QPS |
-| App-wide | code `4` (no Insights subcode) | whole app | — | — |
-| Abuse | `613` **with no subcode** | ad account | they cut your quota | same |
-| Spend-cap edits | `17/1885172` | account | 10/day | 10/day |
-| Ad-set budget edits | `613/1487632` | ad set | 4/hour then blocked 1h | same |
+If the app has no interface, follow [Server-to-Server Apps](https://developers.facebook.com/documentation/development/create-an-app/server-to-server-apps) as well:
 
-Official: [Marketing API rate limiting](https://developers.facebook.com/documentation/ads-commerce/marketing-api/overview/rate-limiting), [Graph / BUC headers](https://developers.facebook.com/docs/graph-api/overview/rate-limiting/).
+- Platform: **Website**.
+- Testing: there is no UI to click. Describe how each permission’s data is used. Meta says you may reuse that description.
+- Mention an existing ad-account relationship if you have one.
 
-### What the headers actually give you
+**Our submission:** S2S, **Yourself or your own business**, usage text per permission (not the same paragraph six times — Meta asks you not to copy-paste). We did not attach a screen recording. Review of the **Marketing API Access Tier** plus the scopes above came back in about **two hours**. That was App Review only, on this app, at that time. It is not a promise, and it is not Business Verification.
 
-They do **not** give remaining calls, remaining score points, or the `active_ads` denominator.
+A workable way to draft the form: paste the S2S page, each permission’s **Allowed Usage**, and one paragraph of what the uploader does, and ask a model to write a **distinct** usage box per permission.
 
-`X-Business-Use-Case-Usage` — percentages and a recovery guess:
+Switch to **Live** after review, not before. In Live mode, unapproved permissions are unavailable even to people with a role on the app.
+
+---
+
+## Rate limits
+
+Marketing API is excluded from Graph Platform user/app call buckets. You still have **several independent** Marketing limiters. [Rate limiting](https://developers.facebook.com/documentation/ads-commerce/marketing-api/overview/rate-limiting), [BUC headers](https://developers.facebook.com/docs/graph-api/overview/rate-limiting/).
+
+| System | Typical signal | Scope | Notes |
+|---|---|---|---|
+| Ad-account **score** | `17/2446079`, `613/1487742`, `X-Ad-Account-Usage` | ad account | 60 vs 9000 by tier |
+| BUC ads_management | `80004`, `X-Business-Use-Case-Usage` | ad account + BUC | hourly formula above |
+| BUC ads_insights | `80000` | ad account + BUC | separate quota |
+| Insights **platform** | `4/1504022`, `4/1504039` | **whole app** Insights | undocumented capacity |
+| Mutation **QPS** | `613/5044001` | app + ad account | 100 QPS on campaign/ad set/ad create/edit |
+| App-wide | code `4` without those Insights subcodes | whole app | |
+| Abuse | `613` **with no subcode** | ad account | Meta reduced quota; contact support |
+| Spend-cap edits | `17/1885172` | account | 10/day — business rule, not a “retry later” throttle |
+| Ad-set budget edits | `613/1487632` | ad set | 4/hour, then blocked 1h |
+| Ad create vs spend | `613/1487225` | account | tied to daily spend limit |
+
+### What the headers actually contain
+
+They report **percentages** and a recovery guess. They do **not** report remaining calls, remaining score points, or `active_ads`.
+
+`X-Business-Use-Case-Usage` example:
 
 ```json
 {
@@ -332,87 +249,104 @@ They do **not** give remaining calls, remaining score points, or the `active_ads
 }
 ```
 
-`call_count` / `total_cputime` / `total_time` are **0–100+ percents**, not counts. You can burn CPU to 100% on heavy Insights while `call_count` is still low.
+`call_count` / `total_cputime` / `total_time` are 0–100+ percents. Heavy Insights can burn CPU while call count is still low.
 
-`estimated_time_to_regain_access` is **minutes**. `X-Ad-Account-Usage.reset_time_duration` is **seconds**. Mix those up and you sleep 60× too long or 60× too short.
+Units differ: BUC `estimated_time_to_regain_access` is **minutes**; `X-Ad-Account-Usage.reset_time_duration` is **seconds**.
 
-`X-Ad-Account-Usage` (`acc_id_util_pct`) is the score telemetry. In live Limited probes we often **never saw this header at all**, and the score error never fired, while BUC percentages climbed with raw HTTP calls. Absence means “no new information”, not “you are at 0”.
+**What we observed:** `X-Ad-Account-Usage` was often **absent** on Limited, while BUC percentages moved with raw HTTP calls. Missing header means no new information, not “you are at 0”. We do not build a local 1-point/3-point ledger from that.
 
-`X-FB-Ads-Insights-Throttle` is a **third** system. Do not fold it into Ads Management.
-
-### Rules we actually use
-
-- **Read headers. Do not invent a local score ledger.** The documented 1-point/3-point math is not an operationally valid control signal if the score header is missing.
-- **Stop on throttle. Do not retry.** Retries extend the penalty.
-- **Do not treat every `17` / `613` as a throttle.** Spend-cap (`17/1885172`) and ad-set budget-frequency (`613/1487632`) are business rules, not rate gates.
-- **Code `4` is app-wide.** One Insights platform throttle can freeze Insights for every account on that app. Ads Management should keep moving if you classified it correctly.
-- **QPS 100** is real on mutation endpoints. Burst creates will hit `613/5044001` even when hourly BUC is empty.
-- Spread calls. A 0.2s floor between Graph calls is boring and works.
-- Auth errors (`102`, `190`): **do not retry the same token.**
+Practical handling (ours): stop on a real throttle (do not retry — retries extend the window); classify by exact code/subcode; keep a small delay between calls; never retry `102` / `190` with the same token.
 
 ---
 
-## Things we learned the hard way
+## FAQ
 
-**ZIP image upload is dead.** `POST /act_…/adimages` with a zip returns `100/1815814` — deprecated. Upload one `jpg`/`png`/… at a time. Docs and SDKs still imply otherwise.
+### Do I still need an app if I use a system user?
 
-**Image hashes are account-scoped.** Reusing another account’s `image_hash` can “succeed” and show the wrong image. Re-upload the bytes on the target account.
+Yes. The app is the API client. The system user is the identity. [System Users](https://developers.facebook.com/docs/business-management-apis/system-users).
 
-**`paging.next` contains the access token.** Graph returns credential-bearing paging URLs. Strip them before you log, persist, or print anything. Rotate if one leaked into a transcript.
+### Can I stay on an unverified / Limited app?
 
-**Tokens do not inherit later grants.** New Page, new scope, new app assignment → mint again.
+You can mint tokens and develop there. Meta documents Limited as not for production advertisers, and the score cap is 60. Full Access is the documented quota upgrade. “Standard access is enough, App Review is only for advanced perms” usually mixes **permission** standard/advanced with the **Marketing API Access Tier**. Headers call Full Access `standard_access`, which is how that mix-up happens.
 
-**`status` is not delivery.** Filter on `effective_status` when you care whether something is actually on. An Ad can be `ACTIVE` under a `PAUSED` Ad Set (`ADSET_PAUSED`). We create Ads ACTIVE only behind PAUSED parents on purpose.
+### One app shared to every BM, separate system user per BM?
 
-**Exact-name `filtering` works** on campaign / ad set / ad edges in v25, and is missing from a lot of parameter tables. Keep an unfiltered fallback.
+That is what we run:
 
-**Creative names get rewritten.** Meta appends a date/hash suffix. Do not treat name equality as identity.
+```text
+toolmaker BM  ──owns──  one app
+                 │
+                 ├── share/claim → ad BM A → system user A → token A
+                 │                         (A’s assigned ad accounts + Pages)
+                 └── share/claim → ad BM B → system user B → token B
+                                           (B’s assigned ad accounts + Pages)
+```
 
-**Instagram identity shows up as `instagram_user_id`**, not `instagram_actor_id`, even if you did not send it.
+A token only reaches assets **assigned** to that system user. It does not automatically see every account in the BM.
 
-**EU:** set `dsa_beneficiary` / `dsa_payor` (and regional categories where required) on Ad Sets. Silent omit → Ads Manager looks empty / ads pause in regulated regions.
+Official constraint: system user and app must belong to the same business to grant the SU a **role on the app**. Sharing/claiming the app into the ad BM is the step that makes the app available there. If that fails, Meta’s alternative is [On Behalf Of](https://developers.facebook.com/docs/marketing-api/business-manager/guides/on-behalf-of/).
 
-**Do not put the token in the query string.** `Authorization: Bearer …` plus `appsecret_proof` over that same token ([secure requests](https://developers.facebook.com/docs/graph-api/guides/secure-requests)).
+### Multiple personal profiles instead of system users?
 
-**Pin the version.** Deprecations are quarterly and they will change create shapes under you.
+Meta documents system users for servers making API calls. User access tokens follow Facebook Login, expire (`expires_at` and often `data_access_expires_at`), and attach actions to a person. We do not run uploaders on profile tokens.
+
+### Several apps, rotate them when limits hit?
+
+We run **one** app and take Full Access. Extra apps can split **app-wide** limiters (code `4`, Insights platform). Score/BUC are still per ad account and still Limited if those apps were never reviewed. Classify the `code`/`subcode` before adding surface area. `613` with no subcode is abuse prevention.
+
+If you are already on Full Access and creates fail with `613/5044001`, that is the **100 QPS** mutation cap — slow down rather than adding apps.
+
+### People say BMs get disabled because of “bad API setup”
+
+We cannot verify other people’s bans. What we avoid: profile tokens for automation, one token with assets from many BMs, bursting mutations, retry loops on throttles, and a farm of unreviewed apps. What we do: verified Business, reviewed app, system user per BM, assigned assets only, header-aware pacing.
 
 ---
 
-## Extra topics people ask us next
+## Things the docs do not spell out clearly
 
-Worth knowing once the token works:
+Labeled as **our** observations. Re-check against live errors; versions move.
 
-- **Never mutate on a 5xx / missing body.** Meta may have applied the write. Treat it as uncertain; read back; do not POST again.
-- **Batch API** counts each sub-request against rate limits. It saves round trips, not quota.
-- **SDK auto-pagination** will silently walk into a throttle. Paginate yourself and sleep.
-- **Insights unique metrics** (`reach`) silently drop when their own header hits 100%, or with breakdowns older than ~13 months. Not an error.
-- **Budget +20%** resets learning. Ad-set budget 4×/hour freezes that ad set for an hour (`613/1487632`).
-- **Copy API is same-account only.** Cross-account means re-upload images, swap pixel / page / audience IDs.
-- **Pages vs Ads quotas are different.** `ads_volume` on a Page is not the BUC `active_ads` denominator.
+- **ZIP image upload** on `POST /act_…/adimages` returned `100/1815814` (deprecated). We upload one `jpg`/`png`/… at a time.
+- **Image hashes are account-scoped.** Reusing another account’s hash can succeed and show the wrong image. Re-upload the bytes.
+- **`paging.next` includes the access token.** Strip before logging. Rotate if one leaked.
+- **`status` vs `effective_status`.** An Ad can be `ACTIVE` under a `PAUSED` Ad Set (`ADSET_PAUSED`).
+- **Exact-name `filtering`** worked on campaign / ad set / ad edges in v25, and is missing from some parameter tables. Keep an unfiltered fallback.
+- **Creative names** may get a date/hash suffix. Do not use name equality as identity.
+- **`instagram_user_id`** appeared on creatives even when we sent `instagram_actor_id`.
+- **EU:** set `dsa_beneficiary` / `dsa_payor` (and regional categories where required) on Ad Sets.
+- Put the token in `Authorization: Bearer` and send `appsecret_proof` over that same token. [Secure requests](https://developers.facebook.com/docs/graph-api/guides/secure-requests).
+- Pin `META_API_VERSION` (we use `v25.0`). Do not call unversioned endpoints.
+- A `5xx` or missing body after POST may still have applied. Read back before sending again.
+- Batch API counts each sub-request. SDK auto-pagination is extra hidden calls.
+- Insights `reach` can disappear when its own header saturates, or with breakdowns past ~13 months, without a hard error.
 
 ---
 
 ## Official links
 
-### App, review, tiers
+### App, verification, review, tiers
 
-- [Create a server-to-server app](https://developers.facebook.com/documentation/development/create-an-app/server-to-server-apps)
-- [App Review](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review)
-- [App Review submission / tutorial](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review/submission-guide)
-- [Authorization (Limited vs Full, scopes vs tier)](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization)
-- [Marketing API Access Tier (feature)](https://developers.facebook.com/docs/features-reference#marketing-api-access-tier)
+- [Server-to-server apps](https://developers.facebook.com/documentation/development/create-an-app/server-to-server-apps)
+- [Business Verification (developers)](https://developers.facebook.com/documentation/development/release/business-verification)
+- [About Business Verification (Help Center)](https://www.facebook.com/business/help/1095661473946872)
+- [Advanced Access requires Business Verification (Feb 2023)](https://developers.facebook.com/blog/post/2023/02/01/developer-platform-requiring-business-verification-for-advanced-access/)
 - [Access levels](https://developers.facebook.com/docs/graph-api/overview/access-levels)
-- [Business Verification](https://developers.facebook.com/docs/apps/business-verification)
-- [Permissions reference](https://developers.facebook.com/docs/permissions)
+- [App Review](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review)
+- [App Review submission guide](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review/submission-guide)
+- [Authorization (Limited vs Full, permissions vs tier)](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization)
+- [Marketing API Access Tier](https://developers.facebook.com/docs/features-reference#marketing-api-access-tier)
+- [Permissions](https://developers.facebook.com/docs/permissions)
 - [App Dashboard](https://developers.facebook.com/apps)
 
 ### System users and tokens
 
 - [System Users](https://developers.facebook.com/docs/business-management-apis/system-users)
+- [Overview, types, limits](https://developers.facebook.com/docs/business-management-apis/system-users/overview)
 - [Create / retrieve / update](https://developers.facebook.com/docs/business-management-apis/system-users/create-retrieve-update)
 - [Install apps, generate / refresh / revoke tokens](https://developers.facebook.com/docs/business-management-apis/system-users/install-apps-and-generate-tokens)
 - [Assign ad accounts and Pages](https://developers.facebook.com/docs/business-management-apis/system-users/guides/permissions)
 - [Help Center: add a system user](https://www.facebook.com/business/help/503306463479099?id=2190812977867143)
+- [On Behalf Of](https://developers.facebook.com/docs/marketing-api/business-manager/guides/on-behalf-of/)
 - [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/)
 - [Graph API Explorer](https://developers.facebook.com/tools/explorer/)
 - [Secure requests / appsecret_proof](https://developers.facebook.com/docs/graph-api/guides/secure-requests)
@@ -425,7 +359,7 @@ Worth knowing once the token works:
 - [Error handling](https://developers.facebook.com/docs/graph-api/guides/error-handling)
 - [Marketing API error reference](https://developers.facebook.com/docs/marketing-api/error-reference/)
 
-### Keep watching
+### Changelogs
 
 - [Marketing API changelog](https://developers.facebook.com/docs/marketing-api/marketing-api-changelog/versions/)
 - [Graph API changelog](https://developers.facebook.com/docs/graph-api/changelog)
@@ -434,8 +368,4 @@ Worth knowing once the token works:
 
 ---
 
-## Disclaimer
-
-Not affiliated with Meta. Not legal advice. Tiers, quotas, and form UX change without the docs catching up — we have watched the same page use three names for one flag. Verify against live `ads_api_access_tier` headers and exact `code`/`error_subcode` pairs.
-
-If you are fighting Limited-tier score `60` right now: stop optimizing sleeps. Submit the S2S review.
+Not affiliated with Meta. Quotas, form UX, and names change. Re-check the linked pages and a live `ads_api_access_tier` header before you treat any number here as current.
