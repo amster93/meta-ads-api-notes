@@ -217,7 +217,17 @@ Switch to **Live** after review, not before. In Live mode, unapproved permission
 
 Subcodes below were observed on Graph **v25.0**. Meta reuses and renames them; treat each `code` / `error_subcode` pair as a lookup key, not a stable contract.
 
-Marketing API is excluded from Graph Platform user/app call buckets. You still have **several independent** Marketing limiters. [Rate limiting](https://developers.facebook.com/documentation/ads-commerce/marketing-api/overview/rate-limiting), [BUC headers](https://developers.facebook.com/docs/graph-api/overview/rate-limiting/).
+Marketing API is excluded from Graph Platform user/app call buckets. You still have **several independent** Marketing limiters at different levels. Hitting one does not mean the others are fine, and they do not share one number. [Rate limiting](https://developers.facebook.com/documentation/ads-commerce/marketing-api/overview/rate-limiting), [BUC headers](https://developers.facebook.com/docs/graph-api/overview/rate-limiting/).
+
+| Level | What it covers | Stops |
+|---|---|---|
+| **App** | Every call on this app, all ad accounts | Insights platform (`4/1504022`, `4/1504039`); generic code `4` |
+| **App + ad account** | One account, this app only | Mutation QPS 100 (`613/5044001`); score cap is also account-level and follows the **app’s** tier |
+| **Ad account + BUC** | One account, one use case (`ads_management`, `ads_insights`, `custom_audience`, Pages, …) | `80004` / `80000` / `80003` / `80014` — sibling accounts and other BUCs stay open |
+| **Ad account** | One account, not a BUC | Abuse `613` with no subcode; spend-cap edits; ad-create vs daily spend |
+| **Ad set** | One ad set | Budget changes 4/hour (`613/1487632`) |
+
+A throttle on account A’s `ads_management` BUC does not, by itself, block account B or Insights on A. An **app**-level Insights platform throttle does block Insights for every account on that app.
 
 | System | Typical signal | Scope | Notes |
 |---|---|---|---|
