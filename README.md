@@ -1,22 +1,8 @@
 # Meta Ads API notes
 
-Not affiliated with Meta. Quotas, form UX, and names change — re-check the linked pages and a live `ads_api_access_tier` header before treating any number here as current. Licensed [CC BY 4.0](LICENSE).
-
 Field notes from wiring a **server-to-server ads uploader**: one Meta app, system users, Business Verification, App Review, Marketing API Access Tier, and rate limits.
 
-Meta’s own pages use several names for the same flags and do not always match the headers on a live response. This guide separates **what the current docs say** from **what we observed**. Prefer live `ads_api_access_tier` headers and exact `code` / `error_subcode` pairs over dashboard copy.
-
-1. [TL;DR](#tldr)
-2. [The naming mess](#the-naming-mess)
-3. [What Meta requires](#what-meta-requires)
-4. [Setup: the app](#setup-the-app-once)
-5. [Setup: system user](#setup-system-user-repeat-per-ad-bm)
-6. [Scopes](#scopes-we-mint)
-7. [Limited vs Full Access](#limited-vs-full-access)
-8. [App Review (S2S)](#app-review-as-a-server-to-server-app)
-9. [Rate limits](#rate-limits)
-10. [FAQ](#faq)
-11. [Official links](#official-links)
+Meta’s own pages use several names for the same flags and do not always match the headers on a live response. This guide separates **what the current docs say** from **what we observed**. Official links are at the bottom. Prefer live `ads_api_access_tier` headers and exact `code` / `error_subcode` pairs over dashboard copy.
 
 ---
 
@@ -369,6 +355,3 @@ We cannot verify other people’s bans. What we avoid: profile tokens for automa
 - [Meta Developer blog](https://developers.facebook.com/blog/)
 - [Developer Community](https://developers.facebook.com/community/)
 
----
-
-Not affiliated with Meta. See the note at the top of this file.
