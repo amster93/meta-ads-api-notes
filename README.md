@@ -1,8 +1,22 @@
 # Meta Ads API notes
 
+Not affiliated with Meta. Quotas, form UX, and names change — re-check the linked pages and a live `ads_api_access_tier` header before treating any number here as current. Licensed [CC BY 4.0](LICENSE).
+
 Field notes from wiring a **server-to-server ads uploader**: one Meta app, system users, Business Verification, App Review, Marketing API Access Tier, and rate limits.
 
-Meta’s own pages use several names for the same flags and do not always match the headers on a live response. This guide separates **what the current docs say** from **what we observed**. Official links are at the bottom. Prefer live `ads_api_access_tier` headers and exact `code` / `error_subcode` pairs over dashboard copy.
+Meta’s own pages use several names for the same flags and do not always match the headers on a live response. This guide separates **what the current docs say** from **what we observed**. Prefer live `ads_api_access_tier` headers and exact `code` / `error_subcode` pairs over dashboard copy.
+
+1. [TL;DR](#tldr)
+2. [The naming mess](#the-naming-mess)
+3. [What Meta requires](#what-meta-requires)
+4. [Setup: the app](#setup-the-app-once)
+5. [Setup: system user](#setup-system-user-repeat-per-ad-bm)
+6. [Scopes](#scopes-we-mint)
+7. [Limited vs Full Access](#limited-vs-full-access)
+8. [App Review (S2S)](#app-review-as-a-server-to-server-app)
+9. [Rate limits](#rate-limits)
+10. [FAQ](#faq)
+11. [Official links](#official-links)
 
 ---
 
@@ -44,7 +58,7 @@ Live proof of the tier is `ads_api_access_tier` on `X-Business-Use-Case-Usage`, 
 
 ### 1. An app
 
-System users call Graph **through an app**. Create a **Business** type app at [developers.facebook.com/apps](https://developers.facebook.com/apps), add the **Marketing API** product, and record `APP_ID` / `APP_SECRET` in a private environment.
+System users call Graph **through an app**. Create the app at [developers.facebook.com/apps/creation](https://developers.facebook.com/apps/creation/). The dashboard now leads with a **use case** picker, not a direct type choice: pick **Other**, then **Business** ([other app types](https://developers.facebook.com/documentation/development/create-an-app/other-app-types)). Then add the **Marketing API** product and record `APP_ID` / `APP_SECRET` in a private environment.
 
 ### 2. A Business Manager that owns (or has claimed) the app
 
@@ -215,6 +229,8 @@ Switch to **Live** after review, not before. In Live mode, unapproved permission
 
 ## Rate limits
 
+Subcodes below were observed on Graph **v25.0**. Meta reuses and renames them; treat each `code` / `error_subcode` pair as a lookup key, not a stable contract.
+
 Marketing API is excluded from Graph Platform user/app call buckets. You still have **several independent** Marketing limiters. [Rate limiting](https://developers.facebook.com/documentation/ads-commerce/marketing-api/overview/rate-limiting), [BUC headers](https://developers.facebook.com/docs/graph-api/overview/rate-limiting/).
 
 | System | Typical signal | Scope | Notes |
@@ -355,4 +371,4 @@ We cannot verify other people’s bans. What we avoid: profile tokens for automa
 
 ---
 
-Not affiliated with Meta. Quotas, form UX, and names change. Re-check the linked pages and a live `ads_api_access_tier` header before you treat any number here as current.
+Not affiliated with Meta. See the note at the top of this file.
