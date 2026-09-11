@@ -229,6 +229,8 @@ Marketing API is excluded from Graph Platform user/app call buckets. You still h
 
 A throttle on account A’s `ads_management` BUC does not, by itself, block account B or Insights on A. An **app**-level Insights platform throttle does block Insights for every account on that app.
 
+Meta’s ads tree is **Campaign → Ad Set → Ads**. The Ad Set holds targeting, budget, schedule, and optimization; Ads under it are the creatives. The 4/hour budget cap is per Ad Set, not per campaign.
+
 | System | Typical signal | Scope | Notes |
 |---|---|---|---|
 | Ad-account **score** | `17/2446079`, `613/1487742`, `X-Ad-Account-Usage` | ad account | 60 vs 9000 by tier |
