@@ -225,11 +225,9 @@ Marketing API is excluded from Graph Platform user/app call buckets. You still h
 | **App + ad account** | One account, this app only | Mutation QPS 100 (`613/5044001`); score cap is also account-level and follows the **app’s** tier |
 | **Ad account + BUC** | One account, one use case (`ads_management`, `ads_insights`, `custom_audience`, Pages, …) | `80004` / `80000` / `80003` / `80014` — sibling accounts and other BUCs stay open |
 | **Ad account** | One account, not a BUC | Abuse `613` with no subcode; spend-cap edits; ad-create vs daily spend |
-| **Ad set** | One ad set | Budget changes 4/hour (`613/1487632`) |
+| **One ad set** | Graph updates to that ad set’s `daily_budget` / `lifetime_budget` | 4/hour, then blocked 1h (`613/1487632`) |
 
 A throttle on account A’s `ads_management` BUC does not, by itself, block account B or Insights on A. An **app**-level Insights platform throttle does block Insights for every account on that app.
-
-Meta’s ads tree is **Campaign → Ad Set → Ads**. The Ad Set holds targeting, budget, schedule, and optimization; Ads under it are the creatives. The 4/hour budget cap is per Ad Set, not per campaign.
 
 | System | Typical signal | Scope | Notes |
 |---|---|---|---|
