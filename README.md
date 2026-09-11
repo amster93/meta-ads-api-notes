@@ -44,7 +44,7 @@ Live proof of the tier is `ads_api_access_tier` on `X-Business-Use-Case-Usage`, 
 
 ### 1. An app
 
-System users call Graph **through an app**. Create the app at [developers.facebook.com/apps/creation](https://developers.facebook.com/apps/creation/). The dashboard now leads with a **use case** picker, not a direct type choice: pick **Other**, then **Business** ([other app types](https://developers.facebook.com/documentation/development/create-an-app/other-app-types)). Then add the **Marketing API** product and record `APP_ID` / `APP_SECRET` in a private environment.
+System users call Graph **through an app**. Create the app at [developers.facebook.com/apps/creation](https://developers.facebook.com/apps/creation/). The dashboard now leads with a **use case** picker, not a direct type choice: pick **Other**, then **Business** ([other app types](https://developers.facebook.com/documentation/development/create-an-app/other-app-types)). Then add the **Marketing API** product. Keep the app ID and app secret private; how you name and store them is up to you.
 
 ### 2. A Business Manager that owns (or has claimed) the app
 
@@ -134,7 +134,7 @@ Official: [System Users](https://developers.facebook.com/docs/business-managemen
 
    API: `POST /{system-user-id}/access_tokens` with `business_app`, `scope`, `appsecret_proof`. Meta now prefers **60-day expiring** tokens (`set_token_expires_in_60_days=true`); some businesses cannot mint non-expiring ones. Expiring tokens need a refresh job ([token docs](https://developers.facebook.com/docs/business-management-apis/system-users/install-apps-and-generate-tokens)).
 
-   Store one env var per BM. Do not put tokens in git, tickets, or Airtable.
+   Keep each BM’s token private. Naming, env layout, and secret storage are your choice — do not commit tokens to git or paste them into tickets.
 
 6. **Check before the next BM:**
 
