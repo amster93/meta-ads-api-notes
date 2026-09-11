@@ -2,7 +2,7 @@
 
 Field notes from setting up a **server-to-server ads uploader**: one Meta app, system users, App Review, Full Access, and the rate-limit mess.
 
-This is the guide we send people who ask “how did you wire the system user?” Official docs exist. They are badly maintained, names keep changing, and they do not match the headers you actually get. Use the official links at the bottom. Trust live headers and exact error codes more than the prose.
+This is the guide we send people who ask “how did you wire the system user?” and the usual group-thread questions: approved app or workaround, one app vs many, system user per BM, why accounts get disabled. Official docs exist. They are badly maintained, names keep changing, and they do not match the headers you actually get. Use the official links at the bottom. Trust live headers and exact error codes more than the prose.
 
 ---
 
@@ -57,6 +57,70 @@ The Graph API **cannot** create Business Managers or Facebook Pages. That part s
 
 ---
 
+## FAQ — the questions people actually ask
+
+These are the same questions that show up in uploader / “built with AI” threads. Short answers; setup steps are below.
+
+### Do I still need an app if I use a system user?
+
+Yes. A system user is not a replacement for the app. The app is the API client. The system user is the identity that app uses to call Graph. No app → no token → no API.
+
+### Unverified app with lower limits, or do App Review?
+
+You start Limited (unreviewed). That is fine for minting a token and a few test calls. It is **not** fine for an uploader.
+
+The advice “system user runs fine on standard access, App Review is only for advanced perms” is the **naming mess** above. People mix three buttons:
+
+- **Permission** standard vs advanced — if you only admin your own ad accounts, you do **not** need Advanced Access on `ads_management`. True.
+- **Marketing API Access Tier** Limited vs Full — this is the rate-limit upgrade. You **do** want this. Headers still call Full Access `standard_access`, which is why that advice sounds right and is wrong.
+- **Full control** on the system user — asset assignment. Unrelated.
+
+We ran Limited. The **60 max score** is what wrecks you. Do the S2S App Review and take Full Access. There is no good workaround.
+
+### One app shared to every BM, separate system user per BM?
+
+Yes. That is the setup.
+
+```text
+toolmaker BM  ──owns──  one app
+                 │
+                 ├── share app → ad BM A → Admin system user A → token A
+                 │                         (only A’s ad accounts + Pages)
+                 └── share app → ad BM B → Admin system user B → token B
+                                           (only B’s ad accounts + Pages)
+```
+
+One system-user token on a BM covers the **ad accounts you assigned to that system user** in that BM. It does not magically see every account in the BM, and it must not be reused on another BM.
+
+### Multiple profiles?
+
+Do not. Personal profile tokens are the “bad API setup” that gets BMs and ad accounts disabled. They expire, they attach API actions to a human, and they are the pattern associated with bans. System users only.
+
+### “Create a few apps and have Claude rotate them like load balancing”
+
+Do not. We run **one** app.
+
+That tip is people trying to multiply the Limited-tier **60 score** by minting extra apps. App *creation* is what trips Meta’s security / verification storm. Extra apps also split **app-wide** limiters (code `4`, Insights platform). That looks like quota evasion. `613` with no subcode is abuse prevention. This is a plausible way to earn the “disabled because of bad API setup” story.
+
+If you are hitting limits:
+
+1. Read the actual error `code` / `subcode` and headers. Classify which limiter it is.
+2. If you are still Limited: stop rotating anything. Get Full Access.
+3. If you already have Full Access and you are bursting mutations: you are hitting **100 QPS**, not “need more apps”. Slow down.
+4. Only an **app-wide** limiter with header proof would even make a second app a conversation. We have not needed it.
+
+An LLM cannot load-balance Meta quotas. Pace on headers, stop on throttle, one token per BM.
+
+### Best way to connect, managing many BMs / ad accounts?
+
+1. One Business app, toolmaker BM, Marketing API product.
+2. S2S App Review → **Marketing API Access Tier = Full Access**.
+3. Share that app into each ad BM. One Admin system user + one token per BM. Assign that BM’s accounts and Pages.
+4. Call Graph with `Authorization: Bearer`, `appsecret_proof`, a pinned version.
+5. Never profile tokens, never one hub token across BMs, never a farm of apps.
+
+---
+
 ## Part A — the app (once)
 
 ### 1. Toolmaker Business Manager
@@ -87,7 +151,7 @@ Record `APP_ID` and `APP_SECRET`. Those stay in a private env, never in git, nev
 
 ### 3. Do not publish. Do not invent a second app.
 
-Leave it unpublished while you wire tokens. Repairing a token or adding a BM is **not** an excuse to recreate the app.
+Leave it unpublished while you wire tokens. Repairing a token or adding a BM is **not** an excuse to recreate the app. Adding BMs is **share the existing app**, not “new app per BM” and not “rotate apps for limits” — see the FAQ.
 
 ---
 
