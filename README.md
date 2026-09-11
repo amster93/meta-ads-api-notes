@@ -72,7 +72,7 @@ How to do it:
 3. Documents and identity checks are listed in [About Business Verification](https://www.facebook.com/business/help/1095661473946872). Typical asks: legal name, address, phone, website, and business documents (registry extract, tax letter, utility bill — whatever the form requests for your country).
 4. If you build the app for a client who will own it, verify **their** business, not yours. [S2S apps](https://developers.facebook.com/documentation/development/create-an-app/server-to-server-apps).
 
-This is not the two-hour App Review queue. Verification can ask for more documents and can take longer. After it completes, Advanced Access also adds data-handling questions.
+Verification is not the same queue as App Review. It can ask for more documents and can take longer. After it completes, Advanced Access also adds data-handling questions.
 
 ### 4. App Review for Full Access (production rate limits)
 
@@ -257,6 +257,13 @@ Units differ: BUC `estimated_time_to_regain_access` is **minutes**; `X-Ad-Accoun
 
 Practical handling (ours): stop on a real throttle (do not retry — retries extend the window); classify by exact code/subcode; keep a small delay between calls; never retry `102` / `190` with the same token.
 
+Transport notes that affect every call:
+
+- Send the token as `Authorization: Bearer` and `appsecret_proof` over that same token. [Secure requests](https://developers.facebook.com/docs/graph-api/guides/secure-requests).
+- Pin a Graph version (we use `v25.0`). Do not call unversioned endpoints.
+- `paging.next` URLs often embed the access token. Strip before logging.
+- A `5xx` or missing body after POST may still have applied. Read back before sending again.
+
 ---
 
 ## FAQ
@@ -299,26 +306,6 @@ If you are already on Full Access and creates fail with `613/5044001`, that is t
 ### People say BMs get disabled because of “bad API setup”
 
 We cannot verify other people’s bans. What we avoid: profile tokens for automation, one token with assets from many BMs, bursting mutations, retry loops on throttles, and a farm of unreviewed apps. What we do: verified Business, reviewed app, system user per BM, assigned assets only, header-aware pacing.
-
----
-
-## Things the docs do not spell out clearly
-
-Labeled as **our** observations. Re-check against live errors; versions move.
-
-- **ZIP image upload** on `POST /act_…/adimages` returned `100/1815814` (deprecated). We upload one `jpg`/`png`/… at a time.
-- **Image hashes are account-scoped.** Reusing another account’s hash can succeed and show the wrong image. Re-upload the bytes.
-- **`paging.next` includes the access token.** Strip before logging. Rotate if one leaked.
-- **`status` vs `effective_status`.** An Ad can be `ACTIVE` under a `PAUSED` Ad Set (`ADSET_PAUSED`).
-- **Exact-name `filtering`** worked on campaign / ad set / ad edges in v25, and is missing from some parameter tables. Keep an unfiltered fallback.
-- **Creative names** may get a date/hash suffix. Do not use name equality as identity.
-- **`instagram_user_id`** appeared on creatives even when we sent `instagram_actor_id`.
-- **EU:** set `dsa_beneficiary` / `dsa_payor` (and regional categories where required) on Ad Sets.
-- Put the token in `Authorization: Bearer` and send `appsecret_proof` over that same token. [Secure requests](https://developers.facebook.com/docs/graph-api/guides/secure-requests).
-- Pin `META_API_VERSION` (we use `v25.0`). Do not call unversioned endpoints.
-- A `5xx` or missing body after POST may still have applied. Read back before sending again.
-- Batch API counts each sub-request. SDK auto-pagination is extra hidden calls.
-- Insights `reach` can disappear when its own header saturates, or with breakdowns past ~13 months, without a hard error.
 
 ---
 
