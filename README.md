@@ -9,9 +9,9 @@ Meta’s own pages use several names for the same flags and do not always match 
 ## TL;DR
 
 1. You need a **Business** app. A system user does not replace it.
-2. Connect that app to a Business Manager and complete **Business Verification**. Meta’s system-user overview asks for App Review **and** Business Verification for the permissions the system user will use.
-3. Add the **Marketing API** product. You start on **Limited Access** (headers: `development_access`).
-4. For production volume, upgrade **Marketing API Access Tier** to **Full Access** (headers: `standard_access`) through App Review. Meta documents Limited as development-only.
+2. Add the **Marketing API** product. You start on **Limited Access** (headers: `development_access`). No Business Verification on this tier.
+3. Do not spend days on Limited’s **60 score**. Wire a token, make the cheap warmup reads, then go **Full Access**. That is the path that saves time.
+4. **Business Verification** is part of the Full Access / App Review upgrade, not of Limited. Then upgrade **Marketing API Access Tier** (headers: `standard_access`).
 5. In each ad BM: Admin system user → assign the app with **full control** → assign that BM’s ad accounts and Pages → **then** mint the token.
 6. If you only admin your own accounts, **standard access** on `ads_management` / `ads_read` is enough for those permissions. That is **not** the same as Full Access on the Marketing API Access Tier.
 
@@ -52,18 +52,19 @@ System users call Graph **through an app**. Create the app at [developers.facebo
 
 Sharing/claiming the app into an ad BM so it appears under that BM’s Apps list is the usual way to install it on that BM’s system user. Confirm it is visible there before minting.
 
-### 3. Business Verification
+### 3. Business Verification (Full Access only)
 
-This is a **separate** process from App Review. It is easy to miss because the dashboards treat it as a prompt inside App Review.
+**Not required for Limited / development.** You can create the app, mint a system-user token, and call Graph on accounts you admin without verifying the business.
 
-Meta currently says:
+It **is** required when you upgrade to **Full Access** (Advanced Access on the Marketing API Access Tier). Meta has required Business Verification for Advanced Access since 1 Feb 2023. The App Review form often blocks submit until verification is done.
 
-- **Advanced Access requires Business Verification** (since 1 Feb 2023). [Access levels](https://developers.facebook.com/docs/graph-api/overview/access-levels), [announcement](https://developers.facebook.com/blog/post/2023/02/01/developer-platform-requiring-business-verification-for-advanced-access/).
-- Apps that request Advanced Access, and apps that let **other Businesses** use the app to access their data, must be connected to a **verified** Business. Until then, users from other Businesses cannot grant permissions and features stay inactive. [Business Verification](https://developers.facebook.com/documentation/development/release/business-verification).
-- System-user overview: the app should go through **App Review and Business Verification** for the permissions the system user needs. [Overview](https://developers.facebook.com/docs/business-management-apis/system-users/overview).
-- The App Review form may block submit until verification is done. [Submission guide](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review/submission-guide) (“Complete Business Verification”).
+- [Access levels](https://developers.facebook.com/docs/graph-api/overview/access-levels)
+- [Announcement](https://developers.facebook.com/blog/post/2023/02/01/developer-platform-requiring-business-verification-for-advanced-access/)
+- [Business Verification](https://developers.facebook.com/documentation/development/release/business-verification)
+- [Submission guide](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review/submission-guide) (“Complete Business Verification”)
+- [System user overview](https://developers.facebook.com/docs/business-management-apis/system-users/overview) (App Review and verification for the permissions the system user uses — that is the Full Access path)
 
-**Role-only exception:** if the app is only used by people who have a [role on the app](https://developers.facebook.com/documentation/development/build-and-test/app-roles), Meta says those users can grant permissions without verification. That exception is about **app-role humans**, not a free pass for system users or for sharing the app into other BMs.
+This is a **separate** process from App Review, even though the dashboard nests the prompt inside it. Verification can ask for documents and can take longer than the review itself.
 
 How to do it:
 
@@ -72,13 +73,11 @@ How to do it:
 3. Documents and identity checks are listed in [About Business Verification](https://www.facebook.com/business/help/1095661473946872). Typical asks: legal name, address, phone, website, and business documents (registry extract, tax letter, utility bill — whatever the form requests for your country).
 4. If you build the app for a client who will own it, verify **their** business, not yours. [S2S apps](https://developers.facebook.com/documentation/development/create-an-app/server-to-server-apps).
 
-Verification is not the same queue as App Review. It can ask for more documents and can take longer. After it completes, Advanced Access also adds data-handling questions.
-
 ### 4. App Review for Full Access (production rate limits)
 
-Adding Marketing API grants **Limited Access** automatically.
+Adding Marketing API grants **Limited Access** automatically. Meta: Limited is “for development only. Not for production apps running for live advertisers.” [Authorization](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization).
 
-Meta: Limited is “for development only. Not for production apps running for live advertisers.” [Authorization](https://developers.facebook.com/documentation/ads-commerce/marketing-api/get-started/authorization).
+Our advice: do not try to live on Limited. The 60 score burns days. Make the warmup reads, complete Business Verification, submit Full Access. That is less pain than pacing around the cap.
 
 To upgrade **Marketing API Access Tier → Full Access**:
 
@@ -186,10 +185,11 @@ From [Authorization](https://developers.facebook.com/documentation/ads-commerce/
 | System users on **app-owning** BM | 1 + 1 admin | 10 + 1 admin |
 | Business Manager / Catalog APIs | Limited | Full surface |
 | Pages via API | Cannot create Pages | Cannot create Pages |
+| Business Verification | Not required | Required for the upgrade |
 
 Reads are generally 1 score point, writes 3. Score errors: `17/2446079`, `613/1487742`.
 
-**What we observed on Limited:** the **60 score** is the first wall for an uploader. Not every endpoint clearly counted toward that score, and the docs do not list which. We treated Full Access as the production path rather than trying to stay on Limited.
+**What we observed on Limited:** the **60 score** is the first wall for an uploader. Not every endpoint clearly counted toward that score, and the docs do not list which. Fighting that cap costs more time than App Review. We recommend going to Full Access instead of engineering around Limited.
 
 Warmup for the 500-call gate: cheap **reads** against accounts you already admin (`/me/adaccounts`, a campaign GET, a Page GET) until the dashboard counts are there. Keep the error rate down; retries on bad calls work against you.
 
@@ -276,7 +276,11 @@ Yes. The app is the API client. The system user is the identity. [System Users](
 
 ### Can I stay on an unverified / Limited app?
 
-You can mint tokens and develop there. Meta documents Limited as not for production advertisers, and the score cap is 60. Full Access is the documented quota upgrade. “Standard access is enough, App Review is only for advanced perms” usually mixes **permission** standard/advanced with the **Marketing API Access Tier**. Headers call Full Access `standard_access`, which is how that mix-up happens.
+Yes for wiring a token and a few test calls. Business Verification is **not** required on Limited. Meta still documents Limited as not for production, and the score cap is 60.
+
+We would not stay there. Do the warmup, verify the business, submit Full Access. That is faster than living with the cap.
+
+“Standard access is enough, App Review is only for advanced perms” usually mixes **permission** standard/advanced with the **Marketing API Access Tier**. Headers call Full Access `standard_access`, which is how that mix-up happens.
 
 ### One app shared to every BM, separate system user per BM?
 
